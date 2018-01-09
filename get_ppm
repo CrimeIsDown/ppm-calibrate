@@ -1,0 +1,54 @@
+#!/bin/bash
+
+set -e
+
+measureppm() {
+	# Grab ppm from our last run, but if it doesn't exist give it a sane default
+	ppm=$4
+	if [ "$ppm" == "" ]; then
+		ppm=0
+	fi
+
+	newppm=$ppm
+	lastppm=$ppm
+	powergain=$3
+
+	ppmsource=$2
+	freq=$(echo "scale=0; ($ppmsource*1000000)/1" | bc -l)
+	maxoffset=50000
+
+	# Get some timestamps
+	ts=`date +"%Y-%m-%d_%H-%M-%S"`
+	csv=$1_ppm-$ts
+
+	# Run measurements
+	echo "$1: Measuring PPM (initial $ppm ppm) with reference freq of $ppmsource, please wait 45 seconds."
+	rtl_power -d "$1" -c .1 -f $((freq-maxoffset)):$((freq+maxoffset)):64 -i 2 -g $powergain -p $ppm -e 45s ${csv}.csv > /dev/null 2>&1
+	newppm=`perl findppm.pl $ppm $freq ${csv}.csv 1`
+	# newppm=$((($RANDOM-$RANDOM)/1000))
+	echo "$1: Found $ppmsource at $newppm ppm, updating config"
+	if [ -s "$configfile" ]; then
+		flock -w 1 $configfile sed -ri 's/"device": "rtl='$1'","ppm": (.*),/"device": "rtl='$1'","ppm": '$newppm',/' $configfile
+	fi
+
+	# Remove the data file
+	rm ${csv}.csv
+}
+
+
+export configfile="./REPLACE_ME.json"
+
+echo "Waiting for USB devices to be released..."
+sleep 3
+
+# Command format: measureppm rtlsdr-deviceid frequency gain
+
+measureppm 00000001 774.34375 2 &
+measureppm 00000002 774.34375 2 &
+measureppm 00000003 472.7125 2 &
+
+# Wait for all the above background jobs to complete
+wait
+
+echo "Waiting for USB devices to be released..."
+sleep 3
